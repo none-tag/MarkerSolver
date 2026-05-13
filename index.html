@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Marker Ratio Solver</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,300&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ─── HEADER ─────────────────────────────────────────────────────────── -->
+  <header>
+    <div class="header-inner">
+      <div class="logo">
+        <span class="logo-mark">◈</span>
+        <span class="logo-text">MarkerSolver</span>
+      </div>
+      <p class="header-sub">Cut Ratio Planning Tool</p>
+    </div>
+  </header>
+
+  <!-- ─── MAIN ───────────────────────────────────────────────────────────── -->
+  <main>
+
+    <!-- ── INTRO ─────────────────────────────────────────────────────────── -->
+    <section class="intro">
+      <h1>Cut Marker Ratio Planner</h1>
+      <p class="intro-desc">
+        Enter your order quantities, table length, fabric consumption and max ply.
+        The solver computes the minimum number of marker rows — ratios and ply counts — 
+        needed to fulfill the order without overproduction.
+      </p>
+    </section>
+
+    <!-- ── FORM ──────────────────────────────────────────────────────────── -->
+    <section class="form-section">
+
+      <!-- BLOCK 1: Sizes -->
+      <div class="form-block">
+        <div class="block-header">
+          <span class="block-num">01</span>
+          <div>
+            <h2>Sizes &amp; Order Quantities</h2>
+            <p class="block-desc">Add each size with its required order quantity.</p>
+          </div>
+        </div>
+
+        <div class="size-table-wrap">
+          <table class="size-table" id="sizeTable">
+            <thead>
+              <tr>
+                <th>Size Name</th>
+                <th>Order Quantity</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="sizeBody">
+              <!-- rows injected by JS -->
+            </tbody>
+          </table>
+          <button class="btn-add" id="addSizeBtn" type="button">
+            <span>+</span> Add Size
+          </button>
+        </div>
+      </div>
+
+      <!-- BLOCK 2: Marker Parameters -->
+      <div class="form-block">
+        <div class="block-header">
+          <span class="block-num">02</span>
+          <div>
+            <h2>Marker Parameters</h2>
+            <p class="block-desc">
+              Total Ratio is computed from table length and fabric consumption.
+            </p>
+          </div>
+        </div>
+
+        <div class="params-grid">
+          <div class="param-field">
+            <label for="tableLength">Table Length <span class="unit">(cm)</span></label>
+            <input type="number" id="tableLength" min="1" step="0.01" placeholder="e.g. 2000" />
+          </div>
+          <div class="param-field">
+            <label for="consumption">Fabric Consumption <span class="unit">(cm per piece)</span></label>
+            <input type="number" id="consumption" min="0.01" step="0.01" placeholder="e.g. 50" />
+          </div>
+          <div class="param-field param-derived">
+            <label>Total Ratio <span class="derived-tag">auto-computed</span></label>
+            <div class="derived-value" id="totalRatioDisplay">—</div>
+            <div class="derived-formula">= floor( table length ÷ consumption )</div>
+          </div>
+          <div class="param-field">
+            <label for="maxPly">Max Ply Quantity</label>
+            <input type="number" id="maxPly" min="1" step="1" placeholder="e.g. 100" value="100" />
+          </div>
+        </div>
+      </div>
+
+      <!-- SOLVE BUTTON -->
+      <div class="solve-row">
+        <button class="btn-solve" id="solveBtn" type="button">
+          Solve Marker Plan
+          <span class="btn-arrow">→</span>
+        </button>
+        <p class="solve-note" id="solveNote"></p>
+      </div>
+
+    </section>
+
+    <!-- ── RESULTS ────────────────────────────────────────────────────────── -->
+    <section class="results-section" id="resultsSection" style="display:none;">
+
+      <div class="results-header">
+        <h2>Results</h2>
+        <div class="results-meta" id="resultsMeta"></div>
+      </div>
+
+      <!-- Marker Plan -->
+      <div class="result-block">
+        <div class="result-block-header">
+          <span class="result-block-label">Marker Plan</span>
+          <span class="result-block-sub" id="markerPlanSub"></span>
+        </div>
+        <div class="table-scroll">
+          <table class="result-table" id="markerTable">
+            <thead id="markerTableHead"></thead>
+            <tbody id="markerTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Fulfillment Summary -->
+      <div class="result-block">
+        <div class="result-block-header">
+          <span class="result-block-label">Fulfillment Summary</span>
+        </div>
+        <div class="table-scroll">
+          <table class="result-table" id="fulfillTable">
+            <thead>
+              <tr>
+                <th>Size</th>
+                <th>Order Qty</th>
+                <th>Produced</th>
+                <th>Shortfall</th>
+                <th>Fill Rate</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="fulfillBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Constraint Checks -->
+      <div class="result-block">
+        <div class="result-block-header">
+          <span class="result-block-label">Constraint Checks</span>
+        </div>
+        <div class="table-scroll">
+          <table class="result-table" id="checkTable">
+            <thead>
+              <tr>
+                <th>Constraint</th>
+                <th>Marker</th>
+                <th>Value</th>
+                <th>Limit</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="checkBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Reset -->
+      <div class="reset-row">
+        <button class="btn-reset" id="resetBtn" type="button">← New Calculation</button>
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- ─── FOOTER ─────────────────────────────────────────────────────────── -->
+  <footer>
+    <p>MarkerSolver · Cut Ratio Planning Tool · Open source on GitHub</p>
+  </footer>
+
+  <script src="solver.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
