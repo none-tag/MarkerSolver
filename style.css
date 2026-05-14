@@ -568,3 +568,37 @@ footer {
   padding-top: 40px;
   border-top: 1px solid var(--grey-100);
 }
+
+/* ─── DOWNLOAD BUTTON ────────────────────────────────────────────────────── */
+.btn-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--white);
+  color: var(--black);
+  border: 1px solid var(--grey-300);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 9px 20px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  letter-spacing: -0.01em;
+  transition: all var(--transition);
+}
+.btn-download:hover {
+  border-color: var(--black);
+  background: var(--grey-50);
+}
+.btn-download:active { transform: scale(0.98); }
+.dl-icon {
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 1;
+}
+.reset-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}

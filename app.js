@@ -26,6 +26,7 @@ const markerTableBody  = document.getElementById('markerTableBody');
 const fulfillBody      = document.getElementById('fulfillBody');
 const checkBody        = document.getElementById('checkBody');
 const resetBtn         = document.getElementById('resetBtn');
+const downloadBtn      = document.getElementById('downloadBtn');
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 const fmt  = n => Number.isFinite(n) ? n.toLocaleString() : '—';
@@ -144,7 +145,9 @@ solveBtn.addEventListener('click', () => {
     return;
   }
 
-  const result = solveMarkers(validSizes, maxPly, totalRatio);
+  const consumption = parseFloat(consumptionInput.value) || 0;
+  const result = solveMarkers(validSizes, maxPly, totalRatio, consumption);
+  lastResult = result;
   renderResults(result);
 
   resultsSection.style.display = 'flex';
@@ -159,9 +162,19 @@ resetBtn.addEventListener('click', () => {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 });
 
+// ─── DOWNLOAD ────────────────────────────────────────────────────────────────
+let lastResult = null;
+
+downloadBtn.addEventListener('click', () => {
+  if (!lastResult) return;
+  if (typeof downloadExcel === 'function') {
+    downloadExcel(lastResult);
+  }
+});
+
 // ─── RENDER RESULTS ───────────────────────────────────────────────────────────
 function renderResults(result) {
-  const { rows, sizes, order, maxPly, totalRatio } = result;
+  const { rows, sizes, order, maxPly, totalRatio, consumption } = result;
   const n = sizes.length;
 
   // total produced
@@ -186,11 +199,11 @@ function renderResults(result) {
     </div>
     <div class="meta-item">
       <span class="meta-dot"></span>
-      <span>Ratio ${totalRatio} · Ply ≤ ${maxPly}</span>
+      <span>Max Ratio ${totalRatio} · Max Ply ${maxPly}</span>
     </div>`;
 
   markerPlanSub.textContent =
-    `${rows.length} row${rows.length !== 1 ? 's' : ''} · ratio sum = ${totalRatio} · ply ≤ ${maxPly}`;
+    `${rows.length} row${rows.length !== 1 ? 's' : ''} · ratio sum ≤ ${totalRatio} · ply ≤ ${maxPly}`;
 
   // ── Marker Plan table ────────────────────────────────────────────────────
   // Build dynamic columns: marker | sizes ratios... | ratio∑ | ply | ×times | pcs per size... | total pcs
@@ -211,6 +224,7 @@ function renderResults(result) {
   addTh(headRow1, '× Times');
   sizes.forEach(sz => addTh(headRow1, `${sz}<br><span style="font-weight:300;color:#aaa;font-size:10px">pieces</span>`));
   addTh(headRow1, 'Total Pcs');
+  addTh(headRow1, 'Fabric Required<br><span style="font-weight:300;color:#aaa;font-size:10px">metres</span>');
 
   markerTableHead.innerHTML = '';
   markerTableHead.appendChild(headRow1);
@@ -222,7 +236,7 @@ function renderResults(result) {
     tr.style.background = mi % 2 === 0 ? '#fff' : '#fafafa';
 
     const ratioSum    = row.ratios.reduce((a, b) => a + b, 0);
-    const ratioOk     = ratioSum === totalRatio;
+    const ratioOk     = ratioSum <= totalRatio;
     const plyOk       = row.ply  <= maxPly;
     const totalPieces = row.produced.reduce((a, b) => a + b, 0);
 
@@ -254,6 +268,10 @@ function renderResults(result) {
     // total pieces
     html += `<td style="font-family:var(--font-mono);font-size:12px;font-weight:600;">${fmt(totalPieces)}</td>`;
 
+    // fabric required = totalPieces × consumption
+    const fabricM  = consumption > 0 ? (totalPieces * row.ply * consumption).toFixed(2) : null;
+    html += `<td style="font-family:var(--font-mono);font-size:12px;">${fabricM !== null ? fabricM + ' m' : '—'}</td>`;
+
     tr.innerHTML = html;
     markerTableBody.appendChild(tr);
   });
@@ -264,6 +282,10 @@ function renderResults(result) {
   let totalHtml = `<td colspan="${1 + n + 3}">Total Produced</td>`;
   totalProduced.forEach(p => { totalHtml += `<td>${fmt(p)}</td>`; });
   totalHtml += `<td>${fmt(totalProduced.reduce((a, b) => a + b, 0))}</td>`;
+  // fabric required total
+  const totalPcsAll = totalProduced.reduce((a,b)=>a+b,0);
+  const totalFabric = consumption > 0 ? (totalPcsAll * consumption).toFixed(2) + ' m' : '—';
+  totalHtml += `<td>${totalFabric}</td>`;
   totalTr.innerHTML = totalHtml;
   markerTableBody.appendChild(totalTr);
 
@@ -316,8 +338,8 @@ function renderResults(result) {
   };
 
   rows.forEach(row => {
-    const ratioSum = row.ratios.reduce((a, b) => a + b, 0);
-    addCheck('Ratio sum = Total Ratio', `M${row.id}`, ratioSum, totalRatio, ratioSum === totalRatio);
+    const ratioSum = row.ratioSum !== undefined ? row.ratioSum : row.ratios.reduce((a, b) => a + b, 0);
+    addCheck('Ratio sum ≤ Max Ratio', `M${row.id}`, ratioSum, totalRatio, ratioSum <= totalRatio);
     addCheck('Ply ≤ Max Ply',           `M${row.id}`, row.ply,  maxPly,     row.ply <= maxPly);
   });
 
