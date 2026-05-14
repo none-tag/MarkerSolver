@@ -26,6 +26,7 @@ const markerTableBody  = document.getElementById('markerTableBody');
 const fulfillBody      = document.getElementById('fulfillBody');
 const checkBody        = document.getElementById('checkBody');
 const resetBtn         = document.getElementById('resetBtn');
+const downloadBtn      = document.getElementById('downloadBtn');
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 const fmt  = n => Number.isFinite(n) ? n.toLocaleString() : '—';
@@ -145,6 +146,7 @@ solveBtn.addEventListener('click', () => {
   }
 
   const result = solveMarkers(validSizes, maxPly, totalRatio);
+  lastResult = result;
   renderResults(result);
 
   resultsSection.style.display = 'flex';
@@ -157,6 +159,16 @@ solveBtn.addEventListener('click', () => {
 resetBtn.addEventListener('click', () => {
   resultsSection.style.display = 'none';
   window.scrollTo({ top: 0, behavior: 'smooth' });
+});
+
+// ─── DOWNLOAD ────────────────────────────────────────────────────────────────
+let lastResult = null;
+
+downloadBtn.addEventListener('click', () => {
+  if (!lastResult) return;
+  if (typeof downloadExcel === 'function') {
+    downloadExcel(lastResult);
+  }
 });
 
 // ─── RENDER RESULTS ───────────────────────────────────────────────────────────
@@ -186,11 +198,11 @@ function renderResults(result) {
     </div>
     <div class="meta-item">
       <span class="meta-dot"></span>
-      <span>Ratio ${totalRatio} · Ply ≤ ${maxPly}</span>
+      <span>Max Ratio ${totalRatio} · Max Ply ${maxPly}</span>
     </div>`;
 
   markerPlanSub.textContent =
-    `${rows.length} row${rows.length !== 1 ? 's' : ''} · ratio sum = ${totalRatio} · ply ≤ ${maxPly}`;
+    `${rows.length} row${rows.length !== 1 ? 's' : ''} · ratio sum ≤ ${totalRatio} · ply ≤ ${maxPly}`;
 
   // ── Marker Plan table ────────────────────────────────────────────────────
   // Build dynamic columns: marker | sizes ratios... | ratio∑ | ply | ×times | pcs per size... | total pcs
@@ -222,7 +234,7 @@ function renderResults(result) {
     tr.style.background = mi % 2 === 0 ? '#fff' : '#fafafa';
 
     const ratioSum    = row.ratios.reduce((a, b) => a + b, 0);
-    const ratioOk     = ratioSum === totalRatio;
+    const ratioOk     = ratioSum <= totalRatio;
     const plyOk       = row.ply  <= maxPly;
     const totalPieces = row.produced.reduce((a, b) => a + b, 0);
 
@@ -316,8 +328,8 @@ function renderResults(result) {
   };
 
   rows.forEach(row => {
-    const ratioSum = row.ratios.reduce((a, b) => a + b, 0);
-    addCheck('Ratio sum = Total Ratio', `M${row.id}`, ratioSum, totalRatio, ratioSum === totalRatio);
+    const ratioSum = row.ratioSum !== undefined ? row.ratioSum : row.ratios.reduce((a, b) => a + b, 0);
+    addCheck('Ratio sum ≤ Max Ratio', `M${row.id}`, ratioSum, totalRatio, ratioSum <= totalRatio);
     addCheck('Ply ≤ Max Ply',           `M${row.id}`, row.ply,  maxPly,     row.ply <= maxPly);
   });
 

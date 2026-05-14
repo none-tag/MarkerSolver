@@ -176,9 +176,12 @@
         </div>
       </div>
 
-      <!-- Reset -->
+      <!-- Actions row -->
       <div class="reset-row">
         <button class="btn-reset" id="resetBtn" type="button">← New Calculation</button>
+        <button class="btn-download" id="downloadBtn" type="button">
+          <span class="dl-icon">↓</span> Download Excel
+        </button>
       </div>
 
     </section>
@@ -190,7 +193,9 @@
     <p>MarkerSolver · Cut Ratio Planning Tool · Open source on GitHub</p>
   </footer>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <script src="solver.js"></script>
+  <script src="export.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
