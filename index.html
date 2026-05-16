@@ -11,6 +11,16 @@
 </head>
 <body>
 
+  <!-- ─── SOLVING SPINNER OVERLAY ────────────────────────────────────────── -->
+  <div class="spinner-overlay" id="spinnerOverlay" style="display:none;">
+    <div class="spinner-box">
+      <div class="spinner-ring"></div>
+      <p class="spinner-label">Searching for global minimum…</p>
+      <p class="spinner-sub">Proving the fewest possible markers</p>
+      <p class="spinner-time"><span id="spinnerTime">0.0s</span> elapsed</p>
+    </div>
+  </div>
+
   <!-- ─── HEADER ─────────────────────────────────────────────────────────── -->
   <header>
     <div class="header-inner">
@@ -30,8 +40,8 @@
       <h1>Cut Marker Ratio Planner</h1>
       <p class="intro-desc">
         Enter your order quantities, table length, fabric consumption and max ply.
-        The solver computes the minimum number of marker rows — ratios and ply counts — 
-        needed to fulfill the order without overproduction.
+        The solver exhaustively proves the minimum number of marker rows — ratios
+        and ply counts — needed to fulfill the order exactly, with no overproduction.
       </p>
     </section>
 
@@ -81,17 +91,17 @@
 
         <div class="params-grid">
           <div class="param-field">
-            <label for="tableLength">Table Length <span class="unit">(cm)</span></label>
+            <label for="tableLength">Table Length <span class="unit">(m)</span></label>
             <input type="number" id="tableLength" min="1" step="0.01" placeholder="e.g. 2000" />
           </div>
           <div class="param-field">
-            <label for="consumption">Fabric Consumption <span class="unit">(cm per piece)</span></label>
+            <label for="consumption">Fabric Consumption <span class="unit">(m per piece)</span></label>
             <input type="number" id="consumption" min="0.01" step="0.01" placeholder="e.g. 50" />
           </div>
           <div class="param-field param-derived">
             <label>Total Ratio <span class="derived-tag">auto-computed</span></label>
             <div class="derived-value" id="totalRatioDisplay">—</div>
-            <div class="derived-formula">= floor( table length ÷ consumption )</div>
+            <div class="derived-formula">= floor( table length ÷ consumption per piece )</div>
           </div>
           <div class="param-field">
             <label for="maxPly">Max Ply Quantity</label>
@@ -176,9 +186,12 @@
         </div>
       </div>
 
-      <!-- Reset -->
+      <!-- Actions row -->
       <div class="reset-row">
         <button class="btn-reset" id="resetBtn" type="button">← New Calculation</button>
+        <button class="btn-download" id="downloadBtn" type="button">
+          <span class="dl-icon">↓</span> Download Excel
+        </button>
       </div>
 
     </section>
@@ -187,10 +200,35 @@
 
   <!-- ─── FOOTER ─────────────────────────────────────────────────────────── -->
   <footer>
-    <p>MarkerSolver · Cut Ratio Planning Tool · Open source on GitHub</p>
+    <p>MarkerSolver · Cut Ratio Planning Tool</p>
   </footer>
 
+  <!-- ─── LIBRARIES ────────────────────────────────────────────────────────── -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+  <!-- solver.js inline copy (id="solverScript") used to create a Web Worker blob -->
+  <!-- The actual solver.js is also loaded below for main-thread fallback -->
+  <script id="solverScript" type="text/js-worker">
+    <!-- solver source injected below at build time; see note in README -->
+    <!-- This tag is read by app.js to create a Worker blob -->
+  </script>
+
   <script src="solver.js"></script>
+  <script src="export.js"></script>
   <script src="app.js"></script>
+
+  <!-- Inline-embed solver source into #solverScript so app.js can blob-URL it -->
+  <script>
+    // Fetch solver.js source and inject into the script tag used by the Worker
+    fetch('solver.js')
+      .then(r => r.text())
+      .then(src => {
+        document.getElementById('solverScript').textContent = src;
+      })
+      .catch(() => {
+        // If fetch fails (e.g. file:// protocol), Worker will fail gracefully
+        // and app.js falls back to main-thread execution.
+      });
+  </script>
 </body>
 </html>

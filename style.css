@@ -568,3 +568,102 @@ footer {
   padding-top: 40px;
   border-top: 1px solid var(--grey-100);
 }
+
+/* ─── DOWNLOAD BUTTON ────────────────────────────────────────────────────── */
+.btn-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--white);
+  color: var(--black);
+  border: 1px solid var(--grey-300);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 9px 20px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  letter-spacing: -0.01em;
+  transition: all var(--transition);
+}
+.btn-download:hover {
+  border-color: var(--black);
+  background: var(--grey-50);
+}
+.btn-download:active { transform: scale(0.98); }
+.dl-icon {
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 1;
+}
+.reset-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* ─── SPINNER OVERLAY ────────────────────────────────────────────────────── */
+.spinner-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.spinner-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 40px 48px;
+  background: var(--white);
+  border: 1px solid var(--grey-200);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+  text-align: center;
+}
+
+.spinner-ring {
+  width: 36px;
+  height: 36px;
+  border: 3px solid var(--grey-200);
+  border-top-color: var(--black);
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.spinner-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--black);
+  letter-spacing: -0.01em;
+}
+
+.spinner-sub {
+  font-size: 12px;
+  color: var(--grey-500);
+  font-weight: 300;
+  margin-top: -4px;
+}
+
+.spinner-time {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--grey-500);
+  margin-top: 4px;
+}
+
+.spinner-time span {
+  color: var(--black);
+  font-weight: 500;
+}

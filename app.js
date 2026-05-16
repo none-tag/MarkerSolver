@@ -1,13 +1,21 @@
 /**
  * app.js — UI controller for the Cut Marker Ratio Planner
- * Handles: dynamic size rows, derived ratio calc, solve trigger, results render
+ *
+ * Changes vs original:
+ *  • No default sizes — starts with empty rows
+ *  • Solver runs in a Web Worker so the UI stays responsive during long solves
+ *  • Shows a "Solving…" spinner with elapsed-time counter while working
+ *  • Fabric Required = total pieces × consumption  (not × ply × consumption)
  */
 
 'use strict';
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
-let sizeRows = [];      // [{ id, name, qty }]
+let sizeRows = [];
 let nextId   = 1;
+let lastResult   = null;
+let solverWorker = null;   // active Web Worker (if any)
+let spinnerTimer = null;   // setInterval for elapsed display
 
 // ─── DOM REFS ─────────────────────────────────────────────────────────────────
 const sizeBody         = document.getElementById('sizeBody');
@@ -26,11 +34,20 @@ const markerTableBody  = document.getElementById('markerTableBody');
 const fulfillBody      = document.getElementById('fulfillBody');
 const checkBody        = document.getElementById('checkBody');
 const resetBtn         = document.getElementById('resetBtn');
+const downloadBtn      = document.getElementById('downloadBtn');
+const spinnerOverlay   = document.getElementById('spinnerOverlay');
+const spinnerTime      = document.getElementById('spinnerTime');
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
-const fmt  = n => Number.isFinite(n) ? n.toLocaleString() : '—';
-const pct  = (a, b) => b === 0 ? 0 : Math.round((a / b) * 10000) / 100;
+const fmt   = n  => Number.isFinite(n) ? n.toLocaleString() : '—';
+const pct   = (a, b) => b === 0 ? 0 : Math.round((a / b) * 10000) / 100;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
 
 function getTotalRatio() {
   const tl = parseFloat(tableLengthInput.value);
@@ -51,13 +68,11 @@ function renderSizeRows() {
                value="${escHtml(row.name)}" maxlength="10" />
       </td>
       <td>
-        <input type="number" class="size-qty" placeholder="e.g. 5000"
+        <input type="number" class="size-qty" placeholder="e.g. 500"
                value="${row.qty || ''}" min="1" step="1" />
       </td>
       <td>
-        <button class="btn-remove" title="Remove size" data-remove="${row.id}">
-          ×
-        </button>
+        <button class="btn-remove" title="Remove size" data-remove="${row.id}">×</button>
       </td>`;
     sizeBody.appendChild(tr);
 
@@ -79,18 +94,11 @@ function renderSizeRows() {
 function addSize(name = '', qty = '') {
   sizeRows.push({ id: nextId++, name, qty: parseInt(qty, 10) || 0 });
   renderSizeRows();
-  // focus last name input
   const inputs = sizeBody.querySelectorAll('.size-name');
   if (inputs.length) inputs[inputs.length - 1].focus();
 }
 
 addSizeBtn.addEventListener('click', () => addSize());
-
-// Seed with default sizes
-const DEFAULTS = [
-  ['S', 10858], ['M', 13992], ['L', 13090], ['XL', 7701], ['XXL', 5719]
-];
-DEFAULTS.forEach(([n, q]) => addSize(n, q));
 
 // ─── TOTAL RATIO (live) ───────────────────────────────────────────────────────
 function updateTotalRatioDisplay() {
@@ -111,13 +119,12 @@ updateTotalRatioDisplay();
 // ─── VALIDATION ───────────────────────────────────────────────────────────────
 function validate() {
   const errors = [];
-
   const validSizes = sizeRows.filter(r => r.name && r.qty > 0);
+
   if (validSizes.length === 0)
     errors.push('Add at least one size with a name and order quantity.');
 
-  const hasDuplicates = new Set(validSizes.map(r => r.name)).size < validSizes.length;
-  if (hasDuplicates)
+  if (new Set(validSizes.map(r => r.name)).size < validSizes.length)
     errors.push('Size names must be unique.');
 
   const totalRatio = getTotalRatio();
@@ -134,7 +141,27 @@ function validate() {
   return { errors, validSizes, totalRatio, maxPly };
 }
 
-// ─── SOLVE ───────────────────────────────────────────────────────────────────
+// ─── SPINNER ─────────────────────────────────────────────────────────────────
+function showSpinner() {
+  if (spinnerOverlay) spinnerOverlay.style.display = 'flex';
+  solveBtn.disabled = true;
+  solveBtn.style.opacity = '0.5';
+  const start = Date.now();
+  spinnerTimer = setInterval(() => {
+    const s = ((Date.now() - start) / 1000).toFixed(1);
+    if (spinnerTime) spinnerTime.textContent = `${s}s`;
+  }, 100);
+}
+
+function hideSpinner() {
+  if (spinnerOverlay) spinnerOverlay.style.display = 'none';
+  solveBtn.disabled = false;
+  solveBtn.style.opacity = '';
+  clearInterval(spinnerTimer);
+  spinnerTimer = null;
+}
+
+// ─── SOLVE ────────────────────────────────────────────────────────────────────
 solveBtn.addEventListener('click', () => {
   solveNote.textContent = '';
   const { errors, validSizes, totalRatio, maxPly } = validate();
@@ -144,126 +171,171 @@ solveBtn.addEventListener('click', () => {
     return;
   }
 
-  const result = solveMarkers(validSizes, maxPly, totalRatio);
-  renderResults(result);
+  const consumption = parseFloat(consumptionInput.value) || 0;
 
-  resultsSection.style.display = 'flex';
-  setTimeout(() => {
-    resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, 50);
+  // Abort any in-progress solve
+  if (solverWorker) {
+    solverWorker.terminate();
+    solverWorker = null;
+    hideSpinner();
+  }
+
+  showSpinner();
+
+  // Try to run in a Web Worker (avoids UI freeze on long solves)
+  // Worker is the same solver.js file — it detects the Worker context via
+  // the absence of `window` and registers a message handler.
+  try {
+    const workerBlob = new Blob(
+      [document.getElementById('solverScript').textContent],
+      { type: 'application/javascript' }
+    );
+    const workerUrl = URL.createObjectURL(workerBlob);
+    solverWorker = new Worker(workerUrl);
+    URL.revokeObjectURL(workerUrl);
+
+    solverWorker.onmessage = function(e) {
+      hideSpinner();
+      solverWorker = null;
+      if (e.data.ok) {
+        lastResult = e.data.result;
+        renderResults(lastResult);
+        resultsSection.style.display = 'flex';
+        setTimeout(() => resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+      } else {
+        solveNote.textContent = 'Solver error: ' + e.data.error;
+      }
+    };
+
+    solverWorker.onerror = function(err) {
+      hideSpinner();
+      solverWorker = null;
+      // Fallback to main thread
+      runSolveMainThread(validSizes, maxPly, totalRatio, consumption);
+    };
+
+    solverWorker.postMessage({ sizes: validSizes, maxPly, totalRatio, consumption });
+
+  } catch (e) {
+    // Web Workers not available — run on main thread
+    runSolveMainThread(validSizes, maxPly, totalRatio, consumption);
+  }
 });
 
-// ─── RESET ───────────────────────────────────────────────────────────────────
+function runSolveMainThread(validSizes, maxPly, totalRatio, consumption) {
+  // Small delay to allow spinner to render before blocking
+  setTimeout(() => {
+    try {
+      const result = solveMarkers(validSizes, maxPly, totalRatio, consumption);
+      hideSpinner();
+      lastResult = result;
+      renderResults(result);
+      resultsSection.style.display = 'flex';
+      setTimeout(() => resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+    } catch (err) {
+      hideSpinner();
+      solveNote.textContent = 'Solver error: ' + err.message;
+    }
+  }, 50);
+}
+
+// ─── RESET ────────────────────────────────────────────────────────────────────
 resetBtn.addEventListener('click', () => {
+  if (solverWorker) { solverWorker.terminate(); solverWorker = null; hideSpinner(); }
   resultsSection.style.display = 'none';
   window.scrollTo({ top: 0, behavior: 'smooth' });
 });
 
+// ─── DOWNLOAD ─────────────────────────────────────────────────────────────────
+downloadBtn.addEventListener('click', () => {
+  if (!lastResult) return;
+  if (typeof downloadExcel === 'function') downloadExcel(lastResult);
+});
+
 // ─── RENDER RESULTS ───────────────────────────────────────────────────────────
 function renderResults(result) {
-  const { rows, sizes, order, maxPly, totalRatio } = result;
+  const { rows, sizes, order, maxPly, totalRatio, consumption } = result;
   const n = sizes.length;
 
-  // total produced
   const totalProduced = new Array(n).fill(0);
-  rows.forEach(row => row.produced.forEach((p, i) => totalProduced[i] += p));
+  rows.forEach(row => row.produced.forEach((p, i) => { totalProduced[i] += p; }));
 
-  // meta
-  const allExact = totalProduced.every((p, i) => p === order[i]);
+  const allExact  = totalProduced.every((p, i) => p === order[i]);
   const totalRuns = rows.reduce((a, r) => a + r.times, 0);
+
   resultsMeta.innerHTML = `
-    <div class="meta-item">
-      <span class="meta-dot"></span>
-      <span>${rows.length} marker row${rows.length !== 1 ? 's' : ''}</span>
-    </div>
-    <div class="meta-item">
-      <span class="meta-dot"></span>
-      <span>${totalRuns} total cutting run${totalRuns !== 1 ? 's' : ''}</span>
-    </div>
-    <div class="meta-item">
-      <span class="meta-dot ${allExact ? 'green' : ''}"></span>
-      <span>${allExact ? '100% fill' : 'Partial fill'}</span>
-    </div>
-    <div class="meta-item">
-      <span class="meta-dot"></span>
-      <span>Ratio ${totalRatio} · Ply ≤ ${maxPly}</span>
-    </div>`;
+    <div class="meta-item"><span class="meta-dot"></span><span>${rows.length} marker row${rows.length !== 1 ? 's' : ''}</span></div>
+    <div class="meta-item"><span class="meta-dot"></span><span>${totalRuns} total cutting run${totalRuns !== 1 ? 's' : ''}</span></div>
+    <div class="meta-item"><span class="meta-dot ${allExact ? 'green' : ''}"></span><span>${allExact ? '100% fill' : 'Partial fill'}</span></div>
+    <div class="meta-item"><span class="meta-dot"></span><span>Max Ratio ${totalRatio} · Max Ply ${maxPly}</span></div>`;
 
   markerPlanSub.textContent =
-    `${rows.length} row${rows.length !== 1 ? 's' : ''} · ratio sum = ${totalRatio} · ply ≤ ${maxPly}`;
+    `${rows.length} row${rows.length !== 1 ? 's' : ''} · ratio sum ≤ ${totalRatio} · ply ≤ ${maxPly}`;
 
   // ── Marker Plan table ────────────────────────────────────────────────────
-  // Build dynamic columns: marker | sizes ratios... | ratio∑ | ply | ×times | pcs per size... | total pcs
-  const headRow1 = document.createElement('tr');
-  const headRow2 = document.createElement('tr');
-
-  const addTh = (tr, text, sub = '') => {
+  markerTableHead.innerHTML = '';
+  const headRow = document.createElement('tr');
+  const addTh = (tr, text) => {
     const th = document.createElement('th');
-    th.innerHTML = text + (sub ? `<br><span style="font-weight:300;color:#bbb;font-size:10px;letter-spacing:0">${sub}</span>` : '');
+    th.innerHTML = text;
     tr.appendChild(th);
-    return th;
   };
 
-  addTh(headRow1, 'Marker');
-  sizes.forEach(sz => addTh(headRow1, `${sz}<br><span style="font-weight:300;color:#aaa;font-size:10px">ratio</span>`));
-  addTh(headRow1, 'Ratio ∑');
-  addTh(headRow1, 'Ply');
-  addTh(headRow1, '× Times');
-  sizes.forEach(sz => addTh(headRow1, `${sz}<br><span style="font-weight:300;color:#aaa;font-size:10px">pieces</span>`));
-  addTh(headRow1, 'Total Pcs');
-
-  markerTableHead.innerHTML = '';
-  markerTableHead.appendChild(headRow1);
+  addTh(headRow, 'Marker');
+  sizes.forEach(sz => addTh(headRow, `${sz}<br><span style="font-weight:300;color:#aaa;font-size:10px">ratio</span>`));
+  addTh(headRow, 'Ratio ∑');
+  addTh(headRow, 'Ply');
+  addTh(headRow, '× Times');
+  sizes.forEach(sz => addTh(headRow, `${sz}<br><span style="font-weight:300;color:#aaa;font-size:10px">pieces</span>`));
+  addTh(headRow, 'Total Pcs');
+  addTh(headRow, 'Fabric Required<br><span style="font-weight:300;color:#aaa;font-size:10px">metres</span>');
+  markerTableHead.appendChild(headRow);
 
   markerTableBody.innerHTML = '';
 
   rows.forEach((row, mi) => {
-    const tr = document.createElement('tr');
+    const tr          = document.createElement('tr');
     tr.style.background = mi % 2 === 0 ? '#fff' : '#fafafa';
 
     const ratioSum    = row.ratios.reduce((a, b) => a + b, 0);
-    const ratioOk     = ratioSum === totalRatio;
-    const plyOk       = row.ply  <= maxPly;
+    const ratioOk     = ratioSum <= totalRatio;
+    const plyOk       = row.ply   <= maxPly;
     const totalPieces = row.produced.reduce((a, b) => a + b, 0);
 
-    let html = `<td><span class="marker-id">M${row.id}</span></td>`;
+    // Fabric required = total pieces produced by this row × consumption per garment
+    // (row.produced already accounts for ply and times)
+    const fabricM = consumption > 0
+      ? (totalPieces * consumption).toFixed(2)
+      : null;
 
-    // ratios
+    let html = `<td><span class="marker-id">M${row.id}</span></td>`;
     row.ratios.forEach(r => {
       html += `<td class="ratio-cell ${r === 0 ? 'ratio-zero' : ''}">${r}</td>`;
     });
-
-    // ratio sum
     html += `<td style="font-family:var(--font-mono);font-size:12px;">
-      <span class="badge ${ratioOk ? 'badge-pass' : 'badge-fail'}">${ratioSum}</span>
-    </td>`;
-
-    // ply
+      <span class="badge ${ratioOk ? 'badge-pass' : 'badge-fail'}">${ratioSum}</span></td>`;
     html += `<td style="font-family:var(--font-mono);">
-      <span class="badge ${plyOk ? 'badge-pass' : 'badge-fail'}">${row.ply}</span>
-    </td>`;
-
-    // times
+      <span class="badge ${plyOk ? 'badge-pass' : 'badge-fail'}">${row.ply}</span></td>`;
     html += `<td style="font-family:var(--font-mono);font-weight:500;">×${row.times}</td>`;
-
-    // pieces per size
     row.produced.forEach(p => {
       html += `<td style="font-family:var(--font-mono);font-size:12px;">${fmt(p)}</td>`;
     });
-
-    // total pieces
     html += `<td style="font-family:var(--font-mono);font-size:12px;font-weight:600;">${fmt(totalPieces)}</td>`;
+    html += `<td style="font-family:var(--font-mono);font-size:12px;">${fabricM !== null ? fabricM + ' m' : '—'}</td>`;
 
     tr.innerHTML = html;
     markerTableBody.appendChild(tr);
   });
 
-  // total row
+  // Total row
   const totalTr = document.createElement('tr');
   totalTr.className = 'total-row';
+  const totalPcsAll   = totalProduced.reduce((a, b) => a + b, 0);
+  const totalFabricM  = consumption > 0 ? (totalPcsAll * consumption).toFixed(2) + ' m' : '—';
   let totalHtml = `<td colspan="${1 + n + 3}">Total Produced</td>`;
   totalProduced.forEach(p => { totalHtml += `<td>${fmt(p)}</td>`; });
-  totalHtml += `<td>${fmt(totalProduced.reduce((a, b) => a + b, 0))}</td>`;
+  totalHtml += `<td>${fmt(totalPcsAll)}</td>`;
+  totalHtml += `<td>${totalFabricM}</td>`;
   totalTr.innerHTML = totalHtml;
   markerTableBody.appendChild(totalTr);
 
@@ -303,7 +375,6 @@ function renderResults(result) {
 
   // ── Constraint Checks ────────────────────────────────────────────────────
   checkBody.innerHTML = '';
-
   const addCheck = (constraint, marker, value, limit, pass) => {
     const tr = document.createElement('tr');
     tr.innerHTML = `
@@ -316,22 +387,12 @@ function renderResults(result) {
   };
 
   rows.forEach(row => {
-    const ratioSum = row.ratios.reduce((a, b) => a + b, 0);
-    addCheck('Ratio sum = Total Ratio', `M${row.id}`, ratioSum, totalRatio, ratioSum === totalRatio);
-    addCheck('Ply ≤ Max Ply',           `M${row.id}`, row.ply,  maxPly,     row.ply <= maxPly);
+    const ratioSum = row.ratioSum !== undefined ? row.ratioSum : row.ratios.reduce((a, b) => a + b, 0);
+    addCheck('Ratio sum ≤ Max Ratio', `M${row.id}`, ratioSum, totalRatio, ratioSum <= totalRatio);
+    addCheck('Ply ≤ Max Ply',         `M${row.id}`, row.ply,  maxPly,     row.ply <= maxPly);
   });
-
   sizes.forEach((sz, i) => {
     const over = totalProduced[i] > order[i];
     addCheck('No overproduction', sz, fmt(totalProduced[i]), fmt(order[i]), !over);
   });
-}
-
-// ─── UTILITY ──────────────────────────────────────────────────────────────────
-function escHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }
